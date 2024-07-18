@@ -1,1 +1,2 @@
 from .FeedForwardNetwork import LightningFeedForwardNetwork
+from .MLPfromPytorchTS import SimpleFeedForwardNetworkBase
