@@ -1,18 +1,21 @@
 import torch
 import torch.nn as nn
-from typing import List, Optional, Callable, Iterable
-from itertools import islice
+from typing import List, Callable
 from gluonts.torch.model.predictor import PyTorchPredictor
 from gluonts.torch.distributions import StudentTOutput
 from gluonts.model.forecast_generator import DistributionForecastGenerator
+import lightning.pytorch as pl
 
-
+# Fonction utilitaire
 def mean_abs_scaling(context, min_scale=1e-5):
     return context.abs().mean(1).clamp(min_scale, None).unsqueeze(1)
 
-#simple forward model from : https://ts.gluon.ai/stable/tutorials/advanced_topics/howto_pytorch_lightning.html 
+# Définition de la métaclasse de base
+class MetaBase(type(nn.Module)):
+    pass
 
-class FeedForwardNetwork(nn.Module):
+# Classe de base utilisant la métaclasse
+class FeedForwardNetwork(nn.Module, metaclass=MetaBase):
     def __init__(
         self,
         prediction_length: int,
@@ -75,3 +78,29 @@ class FeedForwardNetwork(nn.Module):
             input_transform=input_transform,
             forecast_generator=DistributionForecastGenerator(self.distr_output),
         )
+
+# Définition de la métaclasse combinée pour Lightning
+class CombinedMeta(MetaBase, type(pl.LightningModule)):
+    pass
+
+# Classe dérivée utilisant la métaclasse combinée
+class LightningFeedForwardNetwork(FeedForwardNetwork, pl.LightningModule, metaclass=CombinedMeta):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def training_step(self, batch, batch_idx):
+        past_target = batch["past_target"]
+        future_target = batch["future_target"]
+
+        assert past_target.shape[-1] == self.context_length
+        assert future_target.shape[-1] == self.prediction_length
+
+        distr_args, loc, scale = self(past_target)
+        distr = self.distr_output.distribution(distr_args, loc, scale)
+        loss = -distr.log_prob(future_target)
+
+        return loss.mean()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
